@@ -3,3 +3,8 @@ plotly
 pandas
 requests
 python-dotenv
+beautifulsoup4
+langchain
+langchain-openai
+langchain-community
+pydantic>=2.7.4
