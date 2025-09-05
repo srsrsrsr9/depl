@@ -3,9 +3,9 @@ from typing import Dict, List, Any, TypedDict, Annotated
 import json
 from dataclasses import dataclass
 
-from langgraph.graph import Graph, StateGraph, END
+from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolExecutor
-from langchain.chat_models import ChatOpenAI
+from langchain_openai.chat_models import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.tools import Tool
 from langchain.schema import HumanMessage, AIMessage
@@ -97,7 +97,7 @@ class PharmaLaunchAgents:
     
     def competitive_analyst(self, state: PharmaLaunchState) -> PharmaLaunchState:
         """Agent focused on competitive landscape analysis"""
-        print(f"🏁 Competitive Analyst: Evaluating market position for {state['product_name']}")
+        print(f"🏢 Competitive Analyst: Evaluating market position for {state['product_name']}")
         
         try:
             competitive_queries = [
@@ -109,8 +109,8 @@ class PharmaLaunchAgents:
             
             analysis = {}
             for query in competitive_queries:
-                result = self.competitive_chain.run(query)
-                analysis[query] = result
+                result = self.competitive_chain.invoke({"query": query})
+                analysis[query] = result.get("result", "No analysis available")
             
             # Synthesize competitive positioning
             synthesis_prompt = f"""
@@ -166,8 +166,8 @@ class PharmaLaunchAgents:
             
             assessment = {}
             for query in regulatory_queries:
-                result = self.regulatory_chain.run(query)
-                assessment[query] = result
+                result = self.regulatory_chain.invoke({"query": query})
+                assessment[query] = result.get("result", "No assessment available")
             
             # Create regulatory timeline and strategy
             timeline_prompt = f"""
@@ -223,8 +223,8 @@ class PharmaLaunchAgents:
             
             insights = {}
             for query in clinical_queries:
-                result = self.clinical_chain.run(query)
-                insights[query] = result
+                result = self.clinical_chain.invoke({"query": query})
+                insights[query] = result.get("result", "No insights available")
             
             # Develop clinical strategy
             strategy_prompt = f"""

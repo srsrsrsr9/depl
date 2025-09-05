@@ -5,10 +5,10 @@ from bs4 import BeautifulSoup
 import pandas as pd
 
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain.document_loaders import WebBaseLoader, PDFMinerLoader
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import Chroma
-from langchain.chat_models import ChatOpenAI
+from langchain_community.document_loaders import WebBaseLoader
+from langchain_openai.embeddings import OpenAIEmbeddings
+from langchain_community.vectorstores import Chroma
+from langchain_openai.chat_models import ChatOpenAI
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
 from langchain.schema import Document

@@ -18,6 +18,9 @@ python-dotenv==1.0.0
 # Data processing
 pandas==2.2.2
 
+# Visualization
+plotly>=5.0.0
+
 # Fix the pydantic dependency conflict
 pydantic>=2.7.4
 

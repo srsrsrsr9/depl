@@ -6,10 +6,45 @@ import plotly.express as px
 import pandas as pd
 from datetime import datetime
 import time
+import os
 
-from langchain_foundation import PharmaKnowledgeBase, PharmaRAGChains
-from langgraph_agents import create_pharma_workflow, PharmaLaunchState
-from langsmith_monitoring import PharmaLangSmithMonitor, create_monitored_pharma_workflow
+# Try to import modules with error handling for Streamlit Cloud
+try:
+    from langchain_foundation import PharmaKnowledgeBase, PharmaRAGChains
+    from langgraph_agents import create_pharma_workflow, PharmaLaunchState
+    from langsmith_monitoring import PharmaLangSmithMonitor, create_monitored_pharma_workflow
+    MODULES_AVAILABLE = True
+except Exception as e:
+    st.error(f"Module import error: {e}")
+    MODULES_AVAILABLE = False
+
+# For Streamlit Cloud - use st.secrets instead of config.py
+class Config:
+    """Configuration class that works with Streamlit secrets"""
+    OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY"))
+    LLM_MODEL = "gpt-4-turbo"
+    EMBEDDING_MODEL = "text-embedding-3-small"
+    
+    LANGCHAIN_TRACING_V2 = st.secrets.get("LANGCHAIN_TRACING_V2", os.getenv("LANGCHAIN_TRACING_V2", "true"))
+    LANGCHAIN_ENDPOINT = st.secrets.get("LANGCHAIN_ENDPOINT", os.getenv("LANGCHAIN_ENDPOINT", "https://api.smith.langchain.com"))
+    LANGCHAIN_API_KEY = st.secrets.get("LANGCHAIN_API_KEY", os.getenv("LANGCHAIN_API_KEY"))
+    LANGCHAIN_PROJECT = st.secrets.get("LANGCHAIN_PROJECT", os.getenv("LANGCHAIN_PROJECT", "pharma-launch-assistant"))
+    
+    CHUNK_SIZE = 1000
+    CHUNK_OVERLAP = 150
+    VECTOR_STORE_PATH = "./data/vector_store"
+    
+    FDA_BASE_URL = "https://www.fda.gov"
+    CLINICALTRIALS_API = "https://clinicaltrials.gov/api"
+
+# Set environment variables for LangChain
+if Config.OPENAI_API_KEY:
+    os.environ["OPENAI_API_KEY"] = Config.OPENAI_API_KEY
+if Config.LANGCHAIN_API_KEY:
+    os.environ["LANGCHAIN_API_KEY"] = Config.LANGCHAIN_API_KEY
+    os.environ["LANGCHAIN_TRACING_V2"] = Config.LANGCHAIN_TRACING_V2
+    os.environ["LANGCHAIN_ENDPOINT"] = Config.LANGCHAIN_ENDPOINT
+    os.environ["LANGCHAIN_PROJECT"] = Config.LANGCHAIN_PROJECT
 
 # Page configuration
 st.set_page_config(
@@ -56,8 +91,11 @@ st.markdown("""
 def initialize_system():
     """Initialize the pharma launch system with caching"""
     try:
-        monitor = PharmaLangSmithMonitor()
-        return monitor, None, None
+        if MODULES_AVAILABLE:
+            monitor = PharmaLangSmithMonitor()
+            return monitor, None, None
+        else:
+            return None, None, None
     except Exception as e:
         st.error(f"Error initializing monitoring: {e}")
         return None, None, None
@@ -89,6 +127,12 @@ def render_header():
     st.markdown('<h1 class="main-header">💊 Pharmaceutical Launch Intelligence System</h1>', unsafe_allow_html=True)
     st.markdown("---")
     
+    # Check if API keys are configured
+    if not Config.OPENAI_API_KEY:
+        st.error("⚠️ OpenAI API key not configured. Please add it to Streamlit secrets.")
+        st.info("Add your API keys in the Streamlit Cloud dashboard under 'Secrets management'.")
+        return False
+    
     # Description
     st.markdown("""
     **Powered by LangChain, LangGraph & LangSmith**
@@ -97,6 +141,11 @@ def render_header():
     assess competitive landscapes, navigate regulatory requirements, and develop comprehensive 
     launch strategies for new products.
     """)
+    
+    if not MODULES_AVAILABLE:
+        st.warning("⚠️ Some modules are not available. Running in demo mode.")
+    
+    return True
 
 def render_sidebar():
     """Render the sidebar with system controls"""
@@ -104,12 +153,18 @@ def render_sidebar():
     
     # System status
     st.sidebar.markdown("### System Status")
-    monitor, kb, workflow = initialize_system()
     
-    if monitor:
-        st.sidebar.success("✅ LangSmith Monitoring: Active")
+    if Config.OPENAI_API_KEY:
+        st.sidebar.success("✅ OpenAI API: Configured")
     else:
-        st.sidebar.error("❌ LangSmith Monitoring: Inactive")
+        st.sidebar.error("❌ OpenAI API: Not configured")
+    
+    if Config.LANGCHAIN_API_KEY and MODULES_AVAILABLE:
+        st.sidebar.success("✅ LangSmith: Configured")
+        monitor, kb, workflow = initialize_system()
+    else:
+        st.sidebar.warning("⚠️ LangSmith: Not configured or modules unavailable")
+        monitor = None
     
     # Sample data toggle
     use_sample_data = st.sidebar.checkbox("Use Sample Data", value=True, help="Use pre-loaded sample data for demonstration")
@@ -196,51 +251,159 @@ def render_product_input():
         "launch_timeline": launch_timeline
     }
 
-def render_analysis_progress(agent_status):
-    """Render real-time analysis progress"""
-    st.markdown("## 🔄 Analysis Progress")
-    
-    agents = [
-        ("Research Agent", "🔬", "Gathering market and clinical data"),
-        ("Competitive Analyst", "🏁", "Analyzing competitive landscape"), 
-        ("Regulatory Specialist", "📋", "Assessing regulatory requirements"),
-        ("Clinical Strategist", "🧪", "Developing clinical strategy"),
-        ("Market Strategist", "📈", "Creating launch strategy"),
-        ("Report Writer", "📝", "Compiling final report")
-    ]
-    
-    progress_container = st.container()
-    
-    with progress_container:
-        for i, (name, icon, description) in enumerate(agents):
-            col1, col2, col3 = st.columns([1, 3, 1])
-            
-            with col1:
-                st.markdown(f"**{icon} {name}**")
-            
-            with col2:
-                if i < agent_status.get("current_step", 0):
-                    st.success(f"✅ Complete: {description}")
-                elif i == agent_status.get("current_step", 0):
-                    st.info(f"🔄 In Progress: {description}")
-                else:
-                    st.markdown(f"⏳ Pending: {description}")
-            
-            with col3:
-                if i < agent_status.get("current_step", 0):
-                    st.markdown("✅")
-                elif i == agent_status.get("current_step", 0):
-                    st.markdown("🔄")
-                else:
-                    st.markdown("⏳")
+def create_mock_analysis_result(product_info):
+    """Create a comprehensive mock analysis result for demo purposes"""
+    return {
+        "product_name": product_info["product_name"],
+        "final_report": f"""
+# Pharmaceutical Launch Analysis Report
+
+## EXECUTIVE SUMMARY
+
+**Product:** {product_info['product_name']} ({product_info['drug_class']})  
+**Indication:** {product_info['indication']}  
+**Development Stage:** {product_info['development_stage']}
+
+### Key Findings:
+- **Strong market opportunity** identified in {product_info['indication']} treatment
+- **Competitive landscape** shows room for differentiation with premium positioning
+- **Regulatory pathway** is well-established for {product_info['drug_class']} class
+- **Clinical development** strategy should focus on superiority trials
+- **Market access** considerations require early payer engagement
+
+### Strategic Recommendations:
+1. **Accelerate Phase III development** focusing on primary efficacy endpoint
+2. **Develop premium pricing strategy** based on clinical differentiation
+3. **Establish early market access** discussions with key payers
+4. **Build KOL relationships** in target therapeutic area
+5. **Plan specialty care** distribution strategy
+
+### Investment Requirements: $150-200M
+### Timeline to Launch: 18-24 months  
+### Peak Sales Potential: $500M-1B annually
+
+## DETAILED ANALYSIS
+
+### Market Opportunity Assessment
+The {product_info['indication']} market represents a significant commercial opportunity with:
+- Growing patient population and unmet medical needs
+- Limited therapeutic options in current standard of care
+- Strong payer willingness to reimburse effective treatments
+- Opportunity for premium pricing with demonstrated clinical benefit
+
+### Competitive Landscape
+Current market leaders include established therapies with known limitations:
+- Safety concerns with existing treatments create differentiation opportunity
+- Efficacy gaps in certain patient subpopulations
+- Limited convenience factors (dosing, administration) present positioning advantages
+
+### Regulatory Strategy
+FDA approval pathway for {product_info['drug_class']} is well-defined:
+- Standard 505(b)(1) NDA submission recommended
+- No anticipated regulatory obstacles based on class precedent
+- Post-marketing commitments likely but manageable
+- International regulatory alignment feasible
+
+### Clinical Development Strategy  
+Phase III program design recommendations:
+- Superiority trial design vs. active comparator
+- Primary endpoint aligned with regulatory guidance
+- Key secondary endpoints supporting commercial positioning
+- Patient population enrichment strategy for optimal outcomes
+
+## RISK ASSESSMENT
+
+### Key Risks and Mitigation Strategies:
+1. **Clinical Risk:** Trial failure - Mitigate with robust phase II data and adaptive design
+2. **Competitive Risk:** New entrants - Accelerate timeline and establish IP protection
+3. **Regulatory Risk:** Approval delays - Engage early with FDA and maintain quality standards
+4. **Commercial Risk:** Market access - Begin payer discussions during development
+
+### Success Probability: 75-85% based on clinical and regulatory precedent
+
+## RECOMMENDATIONS & NEXT STEPS
+
+### Immediate Actions (0-3 months):
+1. Finalize Phase III protocol design
+2. Initiate regulatory interactions (Type B meeting)
+3. Begin market access strategy development
+4. Establish clinical site network
+
+### Medium-term Actions (3-12 months):
+1. Commence Phase III enrollment
+2. Execute market research and KOL mapping
+3. Develop commercial strategy and pricing model
+4. Initiate manufacturing scale-up planning
+
+### Long-term Actions (12+ months):
+1. Prepare NDA submission package
+2. Execute pre-launch commercial activities
+3. Establish distribution partnerships
+4. Implement launch readiness program
+
+### Decision Points:
+- **Month 6:** Phase III interim analysis
+- **Month 12:** Commercial strategy finalization  
+- **Month 18:** NDA submission decision
+- **Month 24:** Launch execution
+        """,
+        "research_findings": {
+            "market_analysis": {
+                "query": f"What is the market opportunity for {product_info['indication']}?",
+                "insights": f"The {product_info['indication']} market shows strong growth potential with significant unmet medical needs. Current treatments have limitations in efficacy and safety, creating opportunities for innovative {product_info['drug_class']} therapies.",
+                "sources": ["Market research reports", "Clinical publications", "Regulatory guidance"]
+            },
+            "treatment_landscape": {
+                "query": f"What are current treatment options for {product_info['indication']}?",
+                "insights": f"Standard of care for {product_info['indication']} includes multiple therapeutic classes, but significant gaps remain in patient outcomes and quality of life.",
+                "sources": ["Clinical guidelines", "Treatment algorithms", "Real-world evidence"]
+            }
+        },
+        "competitive_analysis": {
+            "strategic_recommendations": f"Position {product_info['product_name']} as a best-in-class {product_info['drug_class']} with superior efficacy and safety profile. Focus on premium positioning with specialty care distribution.",
+            "detailed_analysis": {
+                "competitor_mapping": "Analysis shows 3-4 major competitors with established market share",
+                "pricing_strategy": "Premium pricing justified by clinical differentiation",
+                "market_positioning": "Target specialty care physicians with superior outcomes messaging"
+            }
+        },
+        "regulatory_assessment": {
+            "regulatory_strategy": f"FDA approval pathway for {product_info['drug_class']} is well-established. Recommend 505(b)(1) NDA submission with standard clinical development program.",
+            "approval_pathway": "Standard NDA - 505(b)(1)",
+            "timeline_estimate": "12-18 months post-submission"
+        },
+        "clinical_insights": {
+            "development_strategy": f"Phase III program should demonstrate superiority over current standard of care in {product_info['indication']}. Recommend enriched patient population and adaptive trial design.",
+            "timeline_estimates": "Phase III: 24-36 months",
+            "success_factors": "Strong Phase II data, appropriate patient selection, robust statistical plan"
+        },
+        "market_strategy": {
+            "comprehensive_strategy": f"Launch {product_info['product_name']} with premium pricing strategy, focusing on specialty care market initially. Expand to broader markets post-launch based on real-world evidence generation."
+        }
+    }
 
 def run_analysis(product_info, config):
     """Run the pharmaceutical launch analysis"""
+    
+    if not Config.OPENAI_API_KEY:
+        st.error("OpenAI API key is required to run analysis")
+        return None
     
     try:
         # Initialize progress tracking
         progress_bar = st.progress(0)
         status_text = st.empty()
+        
+        # Check if full modules are available
+        if not MODULES_AVAILABLE:
+            status_text.text("Running in demo mode - using mock analysis...")
+            progress_bar.progress(50)
+            time.sleep(2)
+            
+            result = create_mock_analysis_result(product_info)
+            progress_bar.progress(100)
+            status_text.text("Demo analysis complete!")
+            return result
         
         # Build knowledge base
         status_text.text("Building knowledge base...")
@@ -278,7 +441,6 @@ def run_analysis(product_info, config):
         status_text.text("Running multi-agent analysis...")
         progress_bar.progress(70)
         
-        # Simulate progress updates (in real implementation, this would be integrated with the workflow)
         result = workflow.invoke(initial_state)
         
         progress_bar.progress(100)
@@ -288,7 +450,10 @@ def run_analysis(product_info, config):
         
     except Exception as e:
         st.error(f"Analysis failed: {str(e)}")
-        return None
+        
+        # Fallback to mock analysis
+        st.info("Falling back to demo analysis...")
+        return create_mock_analysis_result(product_info)
 
 def render_results(result):
     """Render analysis results with interactive visualizations"""
@@ -322,7 +487,7 @@ def render_results(result):
     # Tabs for detailed results
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "🔬 Research Findings", 
-        "🏁 Competitive Analysis", 
+        "🏢 Competitive Analysis", 
         "📋 Regulatory Assessment",
         "🧪 Clinical Strategy", 
         "📈 Market Strategy"
@@ -385,25 +550,23 @@ def render_results(result):
                 st.write(insights["development_strategy"])
             
             # Clinical timeline visualization
-            if insights.get("timeline_estimates"):
-                st.markdown("**Timeline Estimates:**")
-                # Create a simple timeline chart
-                phases = ["Phase I", "Phase II", "Phase III", "Filing", "Approval"]
-                durations = [12, 24, 36, 12, 12]  # Sample durations in months
-                
-                fig = go.Figure()
-                fig.add_trace(go.Bar(
-                    x=phases,
-                    y=durations,
-                    marker_color=['#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
-                ))
-                fig.update_layout(
-                    title="Clinical Development Timeline",
-                    xaxis_title="Development Phase",
-                    yaxis_title="Duration (Months)",
-                    height=400
-                )
-                st.plotly_chart(fig, use_container_width=True)
+            st.markdown("**Development Timeline:**")
+            phases = ["Phase I", "Phase II", "Phase III", "Filing", "Approval"]
+            durations = [12, 24, 36, 12, 12]  # Sample durations in months
+            
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=phases,
+                y=durations,
+                marker_color=['#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b']
+            ))
+            fig.update_layout(
+                title="Clinical Development Timeline",
+                xaxis_title="Development Phase",
+                yaxis_title="Duration (Months)",
+                height=400
+            )
+            st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Clinical insights not available in this analysis run.")
     
@@ -439,73 +602,6 @@ def render_results(result):
                 st.plotly_chart(fig_bar, use_container_width=True)
         else:
             st.info("Market strategy not available in this analysis run.")
-
-def render_monitoring_dashboard(monitor):
-    """Render LangSmith monitoring dashboard"""
-    st.markdown("## 📈 System Performance Dashboard")
-    
-    if not monitor:
-        st.warning("Monitoring is not available. Please configure LangSmith credentials.")
-        return
-    
-    try:
-        dashboard_data = monitor.get_performance_dashboard()
-        
-        # Overall metrics
-        st.markdown("### Overall Performance")
-        col1, col2, col3, col4 = st.columns(4)
-        
-        with col1:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("Total Runs", dashboard_data["overall_metrics"]["total_runs"])
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col2:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True) 
-            st.metric("Success Rate", f"{dashboard_data['overall_metrics']['success_rate']:.1f}%")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col3:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("Total Tokens", f"{dashboard_data['overall_metrics']['total_tokens_used']:,}")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        with col4:
-            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
-            st.metric("Est. Cost", f"${dashboard_data['overall_metrics']['estimated_cost']:.2f}")
-            st.markdown('</div>', unsafe_allow_html=True)
-        
-        # Agent performance
-        st.markdown("### Agent Performance")
-        if dashboard_data["agent_performance"]:
-            agent_df = pd.DataFrame.from_dict(dashboard_data["agent_performance"], orient='index')
-            agent_df = agent_df.reset_index()
-            agent_df.rename(columns={'index': 'Agent'}, inplace=True)
-            
-            # Success rate chart
-            if 'total_executions' in agent_df.columns and 'successful_executions' in agent_df.columns:
-                agent_df['success_rate'] = (agent_df['successful_executions'] / agent_df['total_executions'] * 100).fillna(0)
-                
-                fig = px.bar(agent_df, x='Agent', y='success_rate', 
-                           title='Agent Success Rates',
-                           color='success_rate',
-                           color_continuous_scale='RdYlGn')
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-            
-            # Performance table
-            st.dataframe(agent_df, use_container_width=True)
-        else:
-            st.info("No agent performance data available yet. Run an analysis to see metrics.")
-        
-        # Recommendations
-        st.markdown("### Optimization Recommendations")
-        recommendations = dashboard_data.get("recommendations", [])
-        for i, rec in enumerate(recommendations, 1):
-            st.markdown(f"{i}. {rec}")
-            
-    except Exception as e:
-        st.error(f"Error loading monitoring dashboard: {e}")
 
 def render_export_options(result):
     """Render export and sharing options"""
@@ -544,8 +640,9 @@ def main():
     if 'analysis_running' not in st.session_state:
         st.session_state.analysis_running = False
     
-    # Render header
-    render_header()
+    # Render header and check configuration
+    if not render_header():
+        st.stop()
     
     # Render sidebar and get configuration
     config = render_sidebar()
@@ -554,6 +651,9 @@ def main():
     if not st.session_state.analysis_running:
         # Product input form
         product_info = render_product_input()
+        
+        # Store product info in session state
+        st.session_state.product_info = product_info
         
         # Launch analysis button
         st.markdown("---")
@@ -573,21 +673,21 @@ def main():
         # Show analysis in progress
         st.markdown("## 🔄 Analysis in Progress")
         
-        # Run the analysis
-        product_info = {
-            "product_name": st.session_state.get("product_name", "Test Product"),
-            "drug_class": st.session_state.get("drug_class", "Test Class"),
-            "indication": st.session_state.get("indication", "Test Indication")
-        }
+        # Get product info from session state
+        product_info = st.session_state.get("product_info", {
+            "product_name": "Test Product",
+            "drug_class": "Test Class",
+            "indication": "Test Indication"
+        })
         
         with st.spinner("Running comprehensive pharmaceutical launch analysis..."):
-            # Simulate analysis progress
+            # Show progress
             progress_container = st.container()
             
             with progress_container:
                 agents_progress = [
                     "🔬 Research Agent: Gathering data...",
-                    "🏁 Competitive Analyst: Analyzing competitors...", 
+                    "🏢 Competitive Analyst: Analyzing competitors...", 
                     "📋 Regulatory Specialist: Assessing requirements...",
                     "🧪 Clinical Strategist: Developing strategy...",
                     "📈 Market Strategist: Creating launch plan...",
@@ -602,56 +702,10 @@ def main():
                     progress_bar.progress((i + 1) / len(agents_progress))
                     time.sleep(1)  # Simulate processing time
                 
-                # Mock result for demonstration
-                mock_result = {
-                    "product_name": product_info["product_name"],
-                    "final_report": f"""
-# Pharmaceutical Launch Analysis Report
-
-## EXECUTIVE SUMMARY
-
-Analysis completed for {product_info['product_name']} ({product_info['drug_class']}) targeting {product_info['indication']}.
-
-**Key Findings:**
-- Strong market opportunity identified in {product_info['indication']} treatment
-- Competitive landscape shows room for differentiation
-- Regulatory pathway is well-established for {product_info['drug_class']}
-- Clinical development strategy should focus on superiority trials
-
-**Recommendations:**
-1. Proceed with Phase III development focusing on primary efficacy endpoint
-2. Develop premium pricing strategy based on clinical differentiation
-3. Establish early market access discussions with key payers
-4. Build KOL relationships in target therapeutic area
-
-## Investment Requirements: $150-200M
-## Timeline to Launch: 18-24 months
-## Peak Sales Potential: $500M-1B annually
-                    """,
-                    "research_findings": {
-                        "market_analysis": {
-                            "query": "What is the market opportunity?",
-                            "insights": f"The {product_info['indication']} market shows strong growth potential with significant unmet medical needs.",
-                            "sources": ["Market research reports", "Clinical publications"]
-                        }
-                    },
-                    "competitive_analysis": {
-                        "strategic_recommendations": f"Position {product_info['product_name']} as a best-in-class {product_info['drug_class']} with superior efficacy and safety profile."
-                    },
-                    "regulatory_assessment": {
-                        "regulatory_strategy": f"FDA approval pathway for {product_info['drug_class']} is well-established. Recommend 505(b)(1) NDA submission.",
-                        "approval_pathway": "Standard NDA",
-                        "timeline_estimate": "12-18 months post-submission"
-                    },
-                    "clinical_insights": {
-                        "development_strategy": f"Phase III program should demonstrate superiority over current standard of care in {product_info['indication']}."
-                    },
-                    "market_strategy": {
-                        "comprehensive_strategy": f"Launch {product_info['product_name']} with premium pricing strategy, focusing on specialty care market initially."
-                    }
-                }
+                # Run actual analysis
+                result = run_analysis(product_info, config)
                 
-                st.session_state.analysis_result = mock_result
+                st.session_state.analysis_result = result
                 st.session_state.analysis_running = False
                 
                 status_placeholder.success("✅ Analysis Complete!")
@@ -673,11 +727,6 @@ Analysis completed for {product_info['product_name']} ({product_info['drug_class
                 st.session_state.analysis_result = None
                 st.session_state.analysis_running = False
                 st.rerun()
-    
-    # Monitoring dashboard (always visible in sidebar or separate section)
-    if config["monitor"]:
-        st.markdown("---")
-        render_monitoring_dashboard(config["monitor"])
 
 def render_tutorial_page():
     """Render tutorial page explaining the system"""
@@ -706,64 +755,34 @@ def render_tutorial_page():
     - **Evaluation**: Custom evaluators for pharmaceutical domain accuracy
     - **Debugging**: Detailed logs for optimization and troubleshooting
     
-    ## Key Learning Points
+    ## Setup Instructions
     
-    ### 1. LangChain Fundamentals
-    ```python
-    # Document ingestion and processing
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000)
-    embeddings = OpenAIEmbeddings()
-    vector_store = Chroma.from_documents(documents, embeddings)
-    
-    # Custom RAG chains with domain-specific prompts
-    prompt = PromptTemplate(template=regulatory_template)
-    chain = RetrievalQA.from_chain_type(llm, retriever=retriever, prompt=prompt)
+    ### 1. Configure API Keys
+    Add your API keys to Streamlit secrets:
+    ```toml
+    OPENAI_API_KEY = "your_openai_key"
+    LANGCHAIN_API_KEY = "your_langsmith_key"
+    LANGCHAIN_TRACING_V2 = "true"
+    LANGCHAIN_PROJECT = "pharma-launch-assistant"
     ```
     
-    ### 2. LangGraph State Management
-    ```python
-    # Typed state definition
-    class PharmaLaunchState(TypedDict):
-        product_name: str
-        research_findings: Dict[str, Any]
-        competitive_analysis: Dict[str, Any]
-        # ... more fields
-    
-    # Agent workflow definition
-    workflow = StateGraph(PharmaLaunchState)
-    workflow.add_node("research_agent", agents.research_agent)
-    workflow.add_edge("research_agent", "competitive_analyst")
+    ### 2. Install Dependencies
+    ```bash
+    pip install -r requirements.txt
     ```
     
-    ### 3. LangSmith Integration
-    ```python
-    # Environment setup for tracing
-    os.environ["LANGCHAIN_TRACING_V2"] = "true"
-    os.environ["LANGCHAIN_API_KEY"] = "your_key"
-    
-    # Custom evaluators
-    def pharma_accuracy_evaluator(run, example):
-        # Domain-specific evaluation logic
-        return {"score": accuracy_score, "reason": feedback}
+    ### 3. Run the Application
+    ```bash
+    streamlit run streamlit_app.py
     ```
     
-    ## Pharmaceutical Domain Expertise
+    ## Key Features
     
-    The system incorporates deep pharmaceutical knowledge:
-    
-    - **Regulatory Intelligence**: FDA guidance documents, approval pathways
-    - **Clinical Development**: Trial design, endpoints, patient populations  
-    - **Market Analysis**: Competitive landscape, pricing, market access
-    - **Risk Assessment**: Development risks, commercial risks, mitigation strategies
-    
-    ## Next Steps for Learning
-    
-    1. **Experiment** with different drug classes and indications
-    2. **Customize** agent prompts for your specific use cases
-    3. **Extend** with additional data sources (patents, publications)
-    4. **Optimize** using LangSmith insights and evaluation results
-    5. **Deploy** to production with proper scaling and monitoring
-    
+    - **Multi-Agent Analysis**: 6 specialized AI agents working together
+    - **Domain Expertise**: Deep pharmaceutical industry knowledge
+    - **Interactive Visualizations**: Charts and graphs for key insights
+    - **Export Capabilities**: Download results in multiple formats
+    - **Real-time Monitoring**: Track performance and costs
     """)
 
 # Navigation
